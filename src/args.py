@@ -20,7 +20,7 @@ def parse_arguments():
     parser.add_argument(
         "--train-dataset",
         default=None,
-        type=lambda x: x.split(","),
+        type=str,
         help="Which dataset(s) to patch on.",
     )
     parser.add_argument(
