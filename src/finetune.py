@@ -117,33 +117,33 @@ def finetune(args):
         return zs_path, ft_path
 
 
-if __name__ == '__main__':
-    data_location = '<your_data_location>'
-    models = ['ViT-B-32', 'ViT-B-16', 'ViT-L-14']
-    datasets = ['Cars', 'DTD', 'EuroSAT', 'GTSRB', 'MNIST', 'RESISC45', 'SUN397', 'SVHN']
-    epochs = {
-        'Cars': 35,
-        'DTD': 76,
-        'EuroSAT': 12,
-        'GTSRB': 11,
-        'MNIST': 5,
-        'RESISC45': 15,
-        'SUN397': 14,
-        'SVHN': 4,
-        'ImageNet': 4
-    }
+# if __name__ == '__main__':
+#     data_location = '<your_data_location>'
+#     models = ['ViT-B-32', 'ViT-B-16', 'ViT-L-14']
+#     datasets = ['Cars', 'DTD', 'EuroSAT', 'GTSRB', 'MNIST', 'RESISC45', 'SUN397', 'SVHN']
+#     epochs = {
+#         'Cars': 35,
+#         'DTD': 76,
+#         'EuroSAT': 12,
+#         'GTSRB': 11,
+#         'MNIST': 5,
+#         'RESISC45': 15,
+#         'SUN397': 14,
+#         'SVHN': 4,
+#         'ImageNet': 4
+#     }
 
-    for model in models:
-        for dataset in datasets:
-            print('='*100)
-            print(f'Finetuning {model} on {dataset}')
-            print('='*100)
-            args = parse_arguments()
-            args.lr = 1e-5
-            args.epochs = epochs[dataset]
-            args.data_location = data_location
-            args.train_dataset = dataset + 'Val'
-            args.batch_size = 128
-            args.model = model
-            args.save = f'checkpoints/{model}'
-            finetune(args)
+#     for model in models:
+#         for dataset in datasets:
+#             print('='*100)
+#             print(f'Finetuning {model} on {dataset}')
+#             print('='*100)
+#             args = parse_arguments()
+#             args.lr = 1e-5
+#             args.epochs = epochs[dataset]
+#             args.data_location = data_location
+#             args.train_dataset = dataset + 'Val'
+#             args.batch_size = 128
+#             args.model = model
+#             args.save = f'checkpoints/{model}'
+#             finetune(args)
