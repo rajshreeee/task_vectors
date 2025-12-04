@@ -147,3 +147,6 @@ def finetune(args):
 #             args.model = model
 #             args.save = f'checkpoints/{model}'
 #             finetune(args)
+if __name__ == '__main__':
+    args = parse_arguments()
+    finetune(args)
