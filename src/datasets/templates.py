@@ -201,13 +201,13 @@ svhn_template = [
 ]
 
 birads_template = [
-    lambda c: f'a mammogram showing {c} breast density.',
-    lambda c: f'a mammography image classified as {c}.',
-    lambda c: f'a medical breast imaging showing {c}.',
-    lambda c: f'mammography with {c} density.',
-    lambda c: f'a breast x-ray image of {c}.',
-    lambda c: f'a photo of {c} in mammography.',
-    lambda c: f'medical imaging showing {c}.',
+    lambda c: f'a mammogram showing BI-RADS category {c}, normal breast tissue',
+    lambda c: f'a mammography image classified as BI-RADS {c}.',
+    lambda c: f'a medical breast imaging showing BI-RADS {c}.',
+    lambda c: f'mammography with BI-RADS {c} category.',
+    lambda c: f'a breast x-ray image of BI-RADS {c}.',
+    lambda c: f'a photo of BI-RADS {c} in mammography.',
+    lambda c: f'medical imaging showing BI-RADS {c}.',
 ]
 
 dataset_to_template = {
@@ -224,7 +224,8 @@ dataset_to_template = {
     'STL10': stl10_template,
     'SUN397': sun397_template,
     'SVHN': svhn_template,
-    'BIRADS': birads_template
+    'BIRADS': birads_template,
+    'BIRADSImbalanced': birads_template,
 }
 
 
