@@ -19,15 +19,9 @@ class BIRADS:
         """
         BI-RADS dataset for mammography classification.
         
-        Args:
-            preprocess: CLIP preprocessing function
-            location: Root directory containing MINI-DDSM dataset
-            batch_size: Batch size for data loaders
-            num_workers: Number of workers for data loading
-            imbalanced: If True, create artificial imbalance (scarce BI-RADS 5)
-            max_samples_per_class: Maximum samples for majority classes (BI-RADS 1-4)
-            minority_samples: Number of samples for minority class (BI-RADS 5)
-            seed: Random seed for reproducibility
+        Dataset uses 0-indexed Density values: 0, 1, 2, 3, 4
+        We use 1, 2, 3, 4 (skipping 0 which has only 4 samples)
+        These map to labels 0, 1, 2, 3 for the model
         """
         
         self.location = Path(location)
@@ -47,15 +41,17 @@ class BIRADS:
         data = self._map_images_to_birads(data_dir, df_meta)
         df = pd.DataFrame(data)
         
-        # Filter to BI-RADS 1-5 (Density column values 1-4, where 4 maps to BI-RADS 5)
-        # Based on your data: Density values are 0,1,2,3,4
-        # We use 1,2,3,4 which correspond to BI-RADS 1,2,3,4,5 in medical terms
-        df = df[df['birads'].between(1, 4)]
-        
         print(f"\n{'='*70}")
         print(f"BI-RADS Dataset Initialization")
         print(f"{'='*70}")
-        print(f"Original distribution (Density column 1-4):")
+        print(f"Raw distribution (0-indexed Density values):")
+        print(df['birads'].value_counts().sort_index())
+        
+        # Filter to Density 1-4 (skip 0 which has only 4 samples)
+        # These are 0-indexed values from the dataset
+        df = df[df['birads'].isin([1, 2, 3, 4])].copy()
+        
+        print(f"\nAfter filtering to Density 1-4:")
         print(df['birads'].value_counts().sort_index())
         
         # Apply imbalance if requested
@@ -66,30 +62,61 @@ class BIRADS:
                 minority_samples=minority_samples,
                 seed=seed
             )
-        df['label'] = df['birads']
-
-        # Train/test split (80/20, stratified)
-        train_df, test_df = train_test_split(
-            df, 
-            test_size=0.2, 
-            stratify=df['birads'], 
+        
+        # Create 0-indexed labels for model (shift down by 1)
+        # Density 1 -> label 0
+        # Density 2 -> label 1
+        # Density 3 -> label 2
+        # Density 4 -> label 3
+        df['label'] = df['birads'] - 1
+        
+        print(f"\nLabel mapping:")
+        print(f"  Density -> Label")
+        for density in sorted(df['birads'].unique()):
+            label = density - 1
+            count = len(df[df['birads'] == density])
+            print(f"  {density} -> {label} ({count} samples)")
+        
+        # Convert to list of dicts to avoid Subset indexing issues
+        data_list = df.to_dict('records')
+        
+        # Split indices for train/test
+        indices = list(range(len(data_list)))
+        labels_for_split = [d['birads'] for d in data_list]
+        
+        train_indices, test_indices = train_test_split(
+            indices,
+            test_size=0.2,
+            stratify=labels_for_split,
             random_state=seed
         )
+        
+        train_data = [data_list[i] for i in train_indices]
+        test_data = [data_list[i] for i in test_indices]
         
         print(f"\n{'='*70}")
         print(f"Dataset Split Summary")
         print(f"{'='*70}")
-        print(f"Total samples: {len(df)}")
-        print(f"Train samples: {len(train_df)}")
-        print(f"Test samples: {len(test_df)}")
-        print(f"\nTrain distribution:")
-        print(train_df['birads'].value_counts().sort_index())
-        print(f"\nTest distribution:")
-        print(test_df['birads'].value_counts().sort_index())
+        print(f"Total samples: {len(data_list)}")
+        print(f"Train samples: {len(train_data)}")
+        print(f"Test samples: {len(test_data)}")
+        
+        # Count distributions
+        from collections import Counter
+        train_dist = Counter([d['birads'] for d in train_data])
+        test_dist = Counter([d['birads'] for d in test_data])
+        
+        print(f"\nTrain distribution (Density values):")
+        for density in sorted(train_dist.keys()):
+            print(f"  Density {density}: {train_dist[density]} samples")
+        
+        print(f"\nTest distribution (Density values):")
+        for density in sorted(test_dist.keys()):
+            print(f"  Density {density}: {test_dist[density]} samples")
         
         # Create datasets
-        self.train_dataset = BIRADSDataset(train_df, preprocess)
-        self.test_dataset = BIRADSDataset(test_df, preprocess)
+        self.train_dataset = BIRADSDataset(train_data, preprocess)
+        self.test_dataset = BIRADSDataset(test_data, preprocess)
         
         # Create data loaders
         self.train_loader = torch.utils.data.DataLoader(
@@ -107,41 +134,42 @@ class BIRADS:
         )
         
         # Class names for zero-shot classification head
-        # Map to actual BI-RADS categories
-        self.classnames = ['BI-RADS 1', 'BI-RADS 2', 'BI-RADS 3', 'BI-RADS 4']
+        # These correspond to Density 1, 2, 3, 4 (which are labels 0, 1, 2, 3)
+        self.classnames = ['Density 1', 'Density 2', 'Density 3', 'Density 4']
         
         print(f"\nClassnames: {self.classnames}")
+        print(f"Number of classes: {len(self.classnames)}")
         print(f"{'='*70}\n")
     
     def _create_imbalance(self, df, max_samples_per_class, minority_samples, seed):
-        """Create artificial imbalance with BI-RADS 4 (Density=4) as minority class"""
+        """Create artificial imbalance with Density 4 as minority class"""
         
         print(f"\n{'='*70}")
         print(f"Creating Artificial Imbalance")
         print(f"{'='*70}")
         print(f"Config:")
-        print(f"  Majority classes (BI-RADS 1-3): {max_samples_per_class} samples each")
-        print(f"  Minority class (BI-RADS 4): {minority_samples} samples")
+        print(f"  Majority classes (Density 1-3): {max_samples_per_class} samples each")
+        print(f"  Minority class (Density 4): {minority_samples} samples")
         print(f"  Imbalance ratio: {max_samples_per_class / minority_samples:.1f}:1")
         
         # Downsample majority classes (Density 1, 2, 3)
         dfs = []
-        for birads_val in [1, 2, 3]:
-            df_class = df[df['birads'] == birads_val]
+        for density_val in [1, 2, 3]:
+            df_class = df[df['birads'] == density_val]
             n_samples = min(len(df_class), max_samples_per_class)
             df_sampled = df_class.sample(n=n_samples, random_state=seed)
             dfs.append(df_sampled)
-            print(f"  BI-RADS {birads_val} (Density={birads_val}): {len(df_class)} -> {n_samples} samples")
+            print(f"  Density {density_val}: {len(df_class)} -> {n_samples} samples")
         
-        # Make BI-RADS 4/5 (Density 4) the minority class
+        # Make Density 4 the minority class
         df_minority = df[df['birads'] == 4]
         n_minority = min(len(df_minority), minority_samples)
         df_minority_sampled = df_minority.sample(n=n_minority, random_state=seed)
         dfs.append(df_minority_sampled)
-        print(f"  BI-RADS 4 (Density=4) [MINORITY]: {len(df_minority)} -> {n_minority} samples")
+        print(f"  Density 4 [MINORITY]: {len(df_minority)} -> {n_minority} samples")
         
         # Combine and shuffle
-        df_imbalanced = pd.concat(dfs).sample(frac=1, random_state=seed).reset_index(drop=True)
+        df_imbalanced = pd.concat(dfs, ignore_index=True).sample(frac=1, random_state=seed).reset_index(drop=True)
         
         print(f"\nFinal imbalanced distribution:")
         print(df_imbalanced['birads'].value_counts().sort_index())
@@ -183,7 +211,7 @@ class BIRADS:
                     
                     if len(matching_rows) > 0:
                         row = matching_rows.iloc[0]
-                        birads = int(row['Density'])
+                        birads = int(row['Density'])  # Already 0-indexed: 0, 1, 2, 3, 4
                         
                         data.append({
                             'image_path': str(img_path),
@@ -199,21 +227,34 @@ class BIRADS:
 class BIRADSDataset(torch.utils.data.Dataset):
     """PyTorch Dataset for BI-RADS classification"""
     
-    def __init__(self, df, preprocess):
-        self.df = df.reset_index(drop=True)
+    def __init__(self, data_list, preprocess):
+        """
+        Args:
+            data_list: List of dictionaries with keys: 'image_path', 'label', 'birads', etc.
+            preprocess: CLIP preprocessing function
+        """
+        self.data = data_list
         self.preprocess = preprocess
+        
+        # Verify all labels are valid (should be 0, 1, 2, 3)
+        labels = [d['label'] for d in self.data]
+        assert min(labels) >= 0, f"Found negative label: {min(labels)}"
+        assert max(labels) <= 3, f"Found label > 3: {max(labels)} (expected 0-3)"
+        
+        print(f"  BIRADSDataset created with {len(self.data)} samples")
+        print(f"  Label range: {min(labels)} to {max(labels)}")
     
     def __len__(self):
-        return len(self.df)
+        return len(self.data)
     
     def __getitem__(self, idx):
-        row = self.df.iloc[idx]
+        item = self.data[idx]
         
         # Load image
         try:
-            image = Image.open(row['image_path']).convert('RGB')
+            image = Image.open(item['image_path']).convert('RGB')
         except Exception as e:
-            print(f"Error loading image {row['image_path']}: {e}")
+            print(f"Error loading image {item['image_path']}: {e}")
             # Return a black image as fallback
             image = Image.new('RGB', (224, 224), color='black')
         
@@ -221,14 +262,17 @@ class BIRADSDataset(torch.utils.data.Dataset):
         if self.preprocess is not None:
             image = self.preprocess(image)
         
-        label = row['label']
+        label = item['label']
+        
+        # Safety check
+        assert 0 <= label <= 3, f"Label {label} out of range [0, 3]"
         
         return image, label
 
 
 # Convenience class for imbalanced version
 class BIRADSImbalanced(BIRADS):
-    """BI-RADS dataset with artificial imbalance (BI-RADS 4 is minority class)"""
+    """BI-RADS dataset with artificial imbalance (Density 4 is minority class)"""
     
     def __init__(self, preprocess, location=os.path.expanduser('~/data'), 
                  batch_size=128, num_workers=1):
