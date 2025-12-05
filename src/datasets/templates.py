@@ -200,6 +200,15 @@ svhn_template = [
     lambda c: f'a photo of the number: "{c}".',
 ]
 
+birads_template = [
+    lambda c: f'a mammogram showing {c} breast density.',
+    lambda c: f'a mammography image classified as {c}.',
+    lambda c: f'a medical breast imaging showing {c}.',
+    lambda c: f'mammography with {c} density.',
+    lambda c: f'a breast x-ray image of {c}.',
+    lambda c: f'a photo of {c} in mammography.',
+    lambda c: f'medical imaging showing {c}.',
+]
 
 dataset_to_template = {
     'Cars': cars_template,
@@ -215,6 +224,7 @@ dataset_to_template = {
     'STL10': stl10_template,
     'SUN397': sun397_template,
     'SVHN': svhn_template,
+    'BIRADS': birads_template
 }
 
 
