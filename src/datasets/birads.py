@@ -11,7 +11,7 @@ class BIRADS:
                  preprocess,
                  location=os.path.expanduser('~/data'),
                  batch_size=128,
-                 num_workers=16,
+                 num_workers=1,
                  imbalanced=False,
                  max_samples_per_class=1000,
                  minority_samples=200,
