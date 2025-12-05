@@ -51,9 +51,8 @@ def torch_save(model, save_path):
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
     torch.save(model.cpu(), save_path)
 
-
 def torch_load(save_path, device=None):
-    model = torch.load(save_path)
+    model = torch.load(save_path, weights_only=False)
     if device is not None:
         model = model.to(device)
     return model
