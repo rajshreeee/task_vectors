@@ -231,7 +231,7 @@ class BIRADSImbalanced(BIRADS):
     """BI-RADS dataset with artificial imbalance (BI-RADS 4 is minority class)"""
     
     def __init__(self, preprocess, location=os.path.expanduser('~/data'), 
-                 batch_size=128, num_workers=16):
+                 batch_size=128, num_workers=1):
         super().__init__(
             preprocess=preprocess,
             location=location,

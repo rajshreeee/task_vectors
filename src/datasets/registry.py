@@ -81,7 +81,7 @@ def split_train_into_train_val(dataset, new_dataset_class_name, batch_size, num_
     return new_dataset
 
 
-def get_dataset(dataset_name, preprocess, location, batch_size=128, num_workers=16, val_fraction=0.1, max_val_samples=5000):
+def get_dataset(dataset_name, preprocess, location, batch_size=128, num_workers=1, val_fraction=0.1, max_val_samples=5000):
     if dataset_name.endswith('Val'):
         # Handle val splits
         if dataset_name in registry:
