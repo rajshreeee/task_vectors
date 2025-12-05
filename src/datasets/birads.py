@@ -66,7 +66,8 @@ class BIRADS:
                 minority_samples=minority_samples,
                 seed=seed
             )
-        
+        df['label'] = df['birads']
+
         # Train/test split (80/20, stratified)
         train_df, test_df = train_test_split(
             df, 
