@@ -4,247 +4,102 @@ import pandas as pd
 from PIL import Image
 from pathlib import Path
 from sklearn.model_selection import train_test_split
+from collections import Counter
 
 
-class BIRADS:
-    def __init__(self,
-                 preprocess,
-                 location=os.path.expanduser('~/data'),
-                 batch_size=128,
-                 num_workers=1,
-                 imbalanced=False,
-                 max_samples_per_class=1000,
-                 minority_samples=200,
-                 seed=42,
-                 focus_class=None):
-        """
-        BI-RADS dataset for mammography classification.
-        
-        Dataset uses 0-indexed Density values: 0, 1, 2, 3, 4
-        We use 1, 2, 3, 4 (skipping 0 which has only 4 samples)
-        These map to labels 0, 1, 2, 3 for the model
-        """
-        
-        self.location = Path(location)
-        self.imbalanced = imbalanced
-        self.seed = seed
-        self.focus_class = focus_class
-        
-        # Load and prepare dataset
-        data_dir = self.location / 'MINI-DDSM-Complete-JPEG-8'
-        metadata_file = data_dir / 'DataWMask.xlsx'
-        
-        if not metadata_file.exists():
-            raise FileNotFoundError(f"Metadata file not found at {metadata_file}")
-        
-        df_meta = pd.read_excel(metadata_file)
-        
-        # Map images to BI-RADS categories
-        data = self._map_images_to_birads(data_dir, df_meta)
-        df = pd.DataFrame(data)
-        
-        print(f"\n{'='*70}")
-        print(f"BI-RADS Dataset Initialization")
-        print(f"{'='*70}")
-        print(f"Raw distribution (0-indexed Density values):")
-        print(df['birads'].value_counts().sort_index())
-        
-        # Filter to Density 1-4 (skip 0 which has only 4 samples)
-        df = df[df['birads'].isin([1, 2, 3, 4])].copy()
-        
-        print(f"\nAfter filtering to Density 1-4:")
-        print(df['birads'].value_counts().sort_index())
-        
-        # Apply imbalance if requested
-        if imbalanced:
-            df = self._create_imbalance(
-                df, 
-                max_samples_per_class=max_samples_per_class,
-                minority_samples=minority_samples,
-                seed=seed,
-                focus_class=focus_class
-            )
-        
-        # Keep original density values as labels for now
-        df['label'] = df['birads'] - 1
-        
-        # Convert to list of dicts to avoid Subset indexing issues
-        data_list = df.to_dict('records')
-        
-        # Split indices for train/test
-        indices = list(range(len(data_list)))
-        labels_for_split = [d['birads'] for d in data_list]
-        
-        train_indices, test_indices = train_test_split(
-            indices,
-            test_size=0.2,
-            stratify=labels_for_split,
-            random_state=seed
-        )
-        
-        train_data = [data_list[i] for i in train_indices]
-        test_data = [data_list[i] for i in test_indices]
-        
-        print(f"\n{'='*70}")
-        print(f"Dataset Split Summary")
-        print(f"{'='*70}")
-        print(f"Total samples: {len(data_list)}")
-        print(f"Train samples: {len(train_data)}")
-        print(f"Test samples: {len(test_data)}")
-        
-        # Count distributions
-        from collections import Counter
-        train_dist = Counter([d['birads'] for d in train_data])
-        test_dist = Counter([d['birads'] for d in test_data])
-        
-        print(f"\nTrain distribution (Density values):")
-        for density in sorted(train_dist.keys()):
-            print(f"  Density {density}: {train_dist[density]} samples")
-        
-        print(f"\nTest distribution (Density values):")
-        for density in sorted(test_dist.keys()):
-            print(f"  Density {density}: {test_dist[density]} samples")
-        
-        # Create datasets
-        self.train_dataset = BIRADSDataset(train_data, preprocess)
-        self.test_dataset = BIRADSDataset(test_data, preprocess)
-        
-        # Create data loaders
-        self.train_loader = torch.utils.data.DataLoader(
-            self.train_dataset,
-            batch_size=batch_size,
-            shuffle=True,
-            num_workers=num_workers
-        )
-        
-        self.test_loader = torch.utils.data.DataLoader(
-            self.test_dataset,
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=num_workers
-        )
-        
-        # Class names for zero-shot classification head
-        self.classnames = ['Density 1', 'Density 2', 'Density 3', 'Density 4']
-        
-        print(f"\nClassnames: {self.classnames}")
-        print(f"Number of classes: {len(self.classnames)}")
-        print(f"{'='*70}\n")
+def load_birads_data(location):
+    """Load and filter BI-RADS data to densities 1-4 (BI-RADS 2-5)"""
+    data_dir = Path(location) / 'MINI-DDSM-Complete-JPEG-8'
+    metadata_file = data_dir / 'DataWMask.xlsx'
     
-    def _create_imbalance(self, df, max_samples_per_class, minority_samples, seed, focus_class=None):
-        """
-        Create artificial imbalance.
-        """
-        
-        print(f"\n{'='*70}")
-        print(f"Creating Artificial Imbalance")
-        print(f"{'='*70}")
-        
-        if focus_class is None:
-            # Default: Density 4 is minority (scarce)
-            minority_class = 4
-            majority_classes = [1, 2, 3]
-            print(f"Config:")
-            print(f"  Majority classes (Density 1-3): {max_samples_per_class} samples each")
-            print(f"  Minority class (Density 4): {minority_samples} samples [SCARCE]")
-        else:
-            # Focus mode: specified class is abundant, others are scarce
-            minority_class = focus_class
-            majority_classes = [d for d in [1, 2, 3, 4] if d != focus_class]
-            print(f"Config (FOCUS MODE):")
-            print(f"  Regular classes (Densities {majority_classes}): {max_samples_per_class} samples each")
-            print(f"  Focus class (Density {focus_class}): {minority_samples} samples [ABUNDANT]")
-        
-        print(f"  Imbalance ratio: {minority_samples / max_samples_per_class:.1f}:1")
-        
-        # Sample majority classes
-        dfs = []
-        for density_val in majority_classes:
-            df_class = df[df['birads'] == density_val]
-            n_samples = min(len(df_class), max_samples_per_class)
-            df_sampled = df_class.sample(n=n_samples, random_state=seed)
-            dfs.append(df_sampled)
-            print(f"  Density {density_val}: {len(df_class)} -> {n_samples} samples")
-        
-        # Sample minority/focus class
-        df_special = df[df['birads'] == minority_class]
-        n_special = min(len(df_special), minority_samples)
-        df_special_sampled = df_special.sample(n=n_special, random_state=seed)
-        dfs.append(df_special_sampled)
-        print(f"  Density {minority_class} [FOCUS]: {len(df_special)} -> {n_special} samples")
-        
-        # Combine and shuffle
-        df_imbalanced = pd.concat(dfs, ignore_index=True).sample(frac=1, random_state=seed).reset_index(drop=True)
-        
-        print(f"\nFinal distribution:")
-        print(df_imbalanced['birads'].value_counts().sort_index())
-        print(f"Total: {len(df_imbalanced)} samples")
-        
-        return df_imbalanced
+    if not metadata_file.exists():
+        raise FileNotFoundError(f"Metadata file not found at {metadata_file}")
     
-    def _map_images_to_birads(self, data_dir, df_meta):
-        """Map images to BI-RADS categories from metadata"""
-        data = []
+    df_meta = pd.read_excel(metadata_file)
+    
+    # Map images to BI-RADS categories
+    data = []
+    class_folders = {
+        'Normal': data_dir / 'Normal',
+        'Benign': data_dir / 'Benign',
+        'Cancer': data_dir / 'Cancer'
+    }
+    
+    for class_name, class_path in class_folders.items():
+        if not class_path.exists():
+            continue
         
-        class_folders = {
-            'Normal': data_dir / 'Normal',
-            'Benign': data_dir / 'Benign',
-            'Cancer': data_dir / 'Cancer'
-        }
+        case_folders = [f for f in class_path.iterdir() if f.is_dir()]
         
-        for class_name, class_path in class_folders.items():
-            if not class_path.exists():
-                print(f"Warning: {class_path} does not exist, skipping...")
-                continue
+        for case_folder in case_folders:
+            case_id = case_folder.name
+            images = [img for img in case_folder.glob('*.jpg') 
+                     if 'mask' not in img.name.lower() and 'boundary' not in img.name.lower()]
             
-            case_folders = [f for f in class_path.iterdir() if f.is_dir()]
-            
-            for case_folder in case_folders:
-                case_id = case_folder.name
+            for img_path in images:
+                matching_rows = df_meta[df_meta['fileName'].str.contains(case_id, na=False)]
+                if len(matching_rows) == 0:
+                    matching_rows = df_meta[df_meta['fullPath'].str.contains(case_id, na=False)]
                 
-                # Find images (exclude masks)
-                images = [img for img in case_folder.glob('*.jpg') 
-                         if 'mask' not in img.name.lower() and 'boundary' not in img.name.lower()]
-                
-                for img_path in images:
-                    # Match with metadata using fileName
-                    matching_rows = df_meta[df_meta['fileName'].str.contains(case_id, na=False)]
-                    
-                    if len(matching_rows) == 0:
-                        # Try fullPath match
-                        matching_rows = df_meta[df_meta['fullPath'].str.contains(case_id, na=False)]
-                    
-                    if len(matching_rows) > 0:
-                        row = matching_rows.iloc[0]
-                        birads = int(row['Density'])
-                        
-                        data.append({
-                            'image_path': str(img_path),
-                            'birads': birads,
-                            'classification': class_name,
-                            'age': row.get('Age', 50),
-                            'status': row.get('Status', class_name)
-                        })
-        
-        return data
+                if len(matching_rows) > 0:
+                    row = matching_rows.iloc[0]
+                    birads = int(row['Density'])
+                    data.append({
+                        'image_path': str(img_path),
+                        'birads': birads,
+                        'classification': class_name,
+                    })
+    
+    df = pd.DataFrame(data)
+    
+    # Filter to densities 1-4 (BI-RADS 2-5), skip 0
+    df = df[df['birads'].isin([1, 2, 3, 4])].copy()
+    
+    print(f"Loaded BI-RADS data:")
+    print(df['birads'].value_counts().sort_index())
+    
+    return df
 
 
-class BIRADSDataset(torch.utils.data.Dataset):
-    """PyTorch Dataset for BI-RADS classification"""
+def sample_distribution(df, sample_config, seed=42):
+    """
+    Sample data according to configuration.
+    
+    Args:
+        df: DataFrame with 'birads' column
+        sample_config: Dict mapping birads value -> number of samples
+        seed: Random seed
+    
+    Returns:
+        Sampled DataFrame
+    """
+    dfs = []
+    for birads_val, n_samples in sample_config.items():
+        df_class = df[df['birads'] == birads_val]
+        n_available = len(df_class)
+        n_to_sample = min(n_available, n_samples)
+        
+        if n_to_sample < n_samples:
+            print(f"  Warning: Density {birads_val} has only {n_available} samples, requested {n_samples}")
+        
+        df_sampled = df_class.sample(n=n_to_sample, random_state=seed)
+        dfs.append(df_sampled)
+        print(f"  Density {birads_val} (BI-RADS {birads_val + 1}): {n_to_sample} samples")
+    
+    df_result = pd.concat(dfs, ignore_index=True).sample(frac=1, random_state=seed).reset_index(drop=True)
+    return df_result
+
+
+# ============================================================================
+# MULTI-CLASS DATASET
+# ============================================================================
+
+class MultiClassBIRADSDataset(torch.utils.data.Dataset):
+    """PyTorch Dataset for multi-class BI-RADS classification"""
     
     def __init__(self, data_list, preprocess):
-        """
-        Args:
-            data_list: List of dictionaries with keys: 'image_path', 'label', 'birads', etc.
-            preprocess: CLIP preprocessing function
-        """
         self.data = data_list
         self.preprocess = preprocess
-        
-        # Verify all labels are valid
-        labels = [d['label'] for d in self.data]
-        print(f"  BIRADSDataset created with {len(self.data)} samples")
-        print(f"  Label range: {min(labels)} to {max(labels)}")
     
     def __len__(self):
         return len(self.data)
@@ -256,164 +111,305 @@ class BIRADSDataset(torch.utils.data.Dataset):
         try:
             image = Image.open(item['image_path']).convert('RGB')
         except Exception as e:
-            print(f"Error loading image {item['image_path']}: {e}")
-            # Return a black image as fallback
+            print(f"Error loading {item['image_path']}: {e}")
             image = Image.new('RGB', (224, 224), color='black')
         
         # Apply CLIP preprocessing
         if self.preprocess is not None:
             image = self.preprocess(image)
         
-        label = item['label']
+        # Multi-class label
+        # Density 1 -> label 0 (BI-RADS 2)
+        # Density 2 -> label 1 (BI-RADS 3)
+        # Density 3 -> label 2 (BI-RADS 4)
+        # Density 4 -> label 3 (BI-RADS 5)
+        label = item['birads'] - 1
         
         return image, label
 
 
-# ============================================================================
-# MULTI-CLASS VARIANTS
-# ============================================================================
-
-class BIRADSImbalanced(BIRADS):
-    """BI-RADS dataset with artificial imbalance (Density 4 is minority/scarce)"""
+class BIRADSImbalanced:
+    """
+    Multi-class imbalanced dataset: BI-RADS 5 (Density 4) is underrepresented
+    - BI-RADS 2,3,4 (Densities 1,2,3): 800 samples each
+    - BI-RADS 5 (Density 4): 300 samples [UNDERREPRESENTED]
     
-    def __init__(self, preprocess, location=os.path.expanduser('~/data'), 
+    4 classes: Labels 0, 1, 2, 3
+    """
+    
+    def __init__(self, preprocess, location=os.path.expanduser('~/data'),
                  batch_size=128, num_workers=1):
-        super().__init__(
-            preprocess=preprocess,
-            location=location,
-            batch_size=batch_size,
-            num_workers=num_workers,
-            imbalanced=True,
-            max_samples_per_class=1000,
-            minority_samples=200,
-            seed=42
-        )
-
-
-# ============================================================================
-# BINARY CLASSIFICATION VARIANTS
-# ============================================================================
-
-class BIRADSDensity2Binary(BIRADS):
-    """Binary classification: Density 2 vs. all others"""
+        
+        print("\n" + "="*70)
+        print("BIRADS IMBALANCED DATASET (MULTI-CLASS)")
+        print("="*70)
+        print("Configuration:")
+        print("  BI-RADS 2 (Density 1): 800 samples → Label 0")
+        print("  BI-RADS 3 (Density 2): 800 samples → Label 1")
+        print("  BI-RADS 4 (Density 3): 800 samples → Label 2")
+        print("  BI-RADS 5 (Density 4): 300 samples → Label 3 [UNDERREPRESENTED]")
+        
+        # Load all data
+        df = load_birads_data(location)
+        
+        # Sample according to imbalanced distribution
+        sample_config = {
+            1: 800,  # BI-RADS 2
+            2: 800,  # BI-RADS 3
+            3: 800,  # BI-RADS 4
+            4: 300,  # BI-RADS 5 (UNDERREPRESENTED)
+        }
+        df_sampled = sample_distribution(df, sample_config, seed=42)
+        
+        # Train/test split
+        train_data, test_data = self._split_data(df_sampled)
+        
+        # Create multi-class datasets
+        self.train_dataset = MultiClassBIRADSDataset(train_data, preprocess)
+        self.test_dataset = MultiClassBIRADSDataset(test_data, preprocess)
+        
+        # Create data loaders
+        self.train_loader = torch.utils.data.DataLoader(
+            self.train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+        self.test_loader = torch.utils.data.DataLoader(
+            self.test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+        
+        # Multi-class classnames (labels 0-3)
+        self.classnames = ['BI-RADS 2', 'BI-RADS 3', 'BI-RADS 4', 'BI-RADS 5']
+        
+        print(f"\nTrain: {len(train_data)} samples, Test: {len(test_data)} samples")
+        print(f"Classnames: {self.classnames}")
+        print("="*70 + "\n")
     
-    def __init__(self, preprocess, location=os.path.expanduser('~/data'), 
+    def _split_data(self, df):
+        """Split into train/test (80/20)"""
+        data_list = df.to_dict('records')
+        indices = list(range(len(data_list)))
+        labels = [d['birads'] for d in data_list]
+        
+        train_idx, test_idx = train_test_split(
+            indices, test_size=0.2, stratify=labels, random_state=42)
+        
+        train_data = [data_list[i] for i in train_idx]
+        test_data = [data_list[i] for i in test_idx]
+        
+        train_dist = Counter([d['birads'] for d in train_data])
+        test_dist = Counter([d['birads'] for d in test_data])
+        
+        print("\nTrain distribution:")
+        for d in sorted(train_dist.keys()):
+            print(f"  Density {d} (BI-RADS {d+1}): {train_dist[d]}")
+        print("\nTest distribution:")
+        for d in sorted(test_dist.keys()):
+            print(f"  Density {d} (BI-RADS {d+1}): {test_dist[d]}")
+        
+        return train_data, test_data
+
+
+# ============================================================================
+# BINARY FOCUS DATASETS
+# ============================================================================
+
+class BinaryBIRADSDataset(torch.utils.data.Dataset):
+    """PyTorch Dataset for binary BI-RADS classification"""
+    
+    def __init__(self, data_list, preprocess, target_density):
+        """
+        Args:
+            data_list: List of dicts with 'birads' and 'image_path'
+            preprocess: CLIP preprocessing function
+            target_density: Which density is the positive class (1 or 4)
+        """
+        self.data = data_list
+        self.preprocess = preprocess
+        self.target_density = target_density
+    
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, idx):
+        item = self.data[idx]
+        
+        # Load image
+        try:
+            image = Image.open(item['image_path']).convert('RGB')
+        except Exception as e:
+            print(f"Error loading {item['image_path']}: {e}")
+            image = Image.new('RGB', (224, 224), color='black')
+        
+        # Apply CLIP preprocessing
+        if self.preprocess is not None:
+            image = self.preprocess(image)
+        
+        # Binary label: 1 if target density, 0 otherwise
+        label = 1 if item['birads'] == self.target_density else 0
+        
+        return image, label
+
+
+class BIRADSDensity2Focus:
+    """
+    Binary focus on BI-RADS 2 (Density 1)
+    - BI-RADS 2 (Density 1): 300 samples → Label 1 [FOCUS]
+    - Not BI-RADS 2 (Densities 2,3,4): 300 samples (100 each) → Label 0
+    
+    2 classes: Labels 0, 1
+    """
+    
+    def __init__(self, preprocess, location=os.path.expanduser('~/data'),
                  batch_size=128, num_workers=1):
-        # Initialize with normal settings first
-        super().__init__(
-            preprocess=preprocess,
-            location=location,
-            batch_size=batch_size,
-            num_workers=num_workers,
-            imbalanced=False,
-            seed=42
-        )
         
-        # Override to convert to binary
-        self._convert_to_binary(target_density=1)
+        print("\n" + "="*70)
+        print("BIRADS 2 FOCUS DATASET (BINARY)")
+        print("="*70)
+        print("Configuration:")
+        print("  BI-RADS 2 (Density 1): 300 samples → Label 1 [FOCUS]")
+        print("  Not BI-RADS 2:")
+        print("    - BI-RADS 3 (Density 2): 100 samples")
+        print("    - BI-RADS 4 (Density 3): 100 samples")
+        print("    - BI-RADS 5 (Density 4): 100 samples")
+        print("    Total Label 0: 300 samples")
+        
+        # Load all data
+        df = load_birads_data(location)
+        
+        # Sample: 300 from Density 1, 100 each from others
+        sample_config = {
+            1: 300,  # BI-RADS 2 (FOCUS)
+            2: 100,  # BI-RADS 3
+            3: 100,  # BI-RADS 4
+            4: 100,  # BI-RADS 5
+        }
+        df_sampled = sample_distribution(df, sample_config, seed=42)
+        
+        # Train/test split
+        train_data, test_data = self._split_data(df_sampled, target_density=1)
+        
+        # Create binary datasets (target_density=1 means BI-RADS 2 is positive)
+        self.train_dataset = BinaryBIRADSDataset(train_data, preprocess, target_density=1)
+        self.test_dataset = BinaryBIRADSDataset(test_data, preprocess, target_density=1)
+        
+        # Create data loaders
+        self.train_loader = torch.utils.data.DataLoader(
+            self.train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+        self.test_loader = torch.utils.data.DataLoader(
+            self.test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+        
+        # Binary classnames
+        self.classnames = ['Not BI-RADS 2', 'BI-RADS 2']
+        
+        print(f"\nTrain: {len(train_data)} samples, Test: {len(test_data)} samples")
+        print(f"Classnames: {self.classnames}")
+        print("="*70 + "\n")
     
-    def _convert_to_binary(self, target_density):
-        """Convert multi-class to binary: target vs. others"""
+    def _split_data(self, df, target_density):
+        """Split into train/test (80/20)"""
+        data_list = df.to_dict('records')
+        indices = list(range(len(data_list)))
+        labels = [d['birads'] for d in data_list]
         
-        print(f"\n{'='*70}")
-        print(f"Converting to Binary Classification")
-        print(f"{'='*70}")
-        print(f"Target: Density {target_density}")
-        print(f"Others: All other densities combined")
+        train_idx, test_idx = train_test_split(
+            indices, test_size=0.2, stratify=labels, random_state=42)
         
-        # Update train dataset
-        for item in self.train_dataset.data:
-            if item['birads'] == target_density:
-                item['label'] = 1  # Positive class
-            else:
-                item['label'] = 0  # Negative class
+        train_data = [data_list[i] for i in train_idx]
+        test_data = [data_list[i] for i in test_idx]
         
-        # Update test dataset
-        for item in self.test_dataset.data:
-            if item['birads'] == target_density:
-                item['label'] = 1  # Positive class
-            else:
-                item['label'] = 0  # Negative class
+        # Count binary labels
+        train_labels = [1 if d['birads'] == target_density else 0 for d in train_data]
+        test_labels = [1 if d['birads'] == target_density else 0 for d in test_data]
         
-        # Update classnames for binary
-        self.classnames = [f'Not Density {target_density}', f'Density {target_density}']
-        
-        # Print distribution
-        train_labels = [d['label'] for d in self.train_dataset.data]
-        test_labels = [d['label'] for d in self.test_dataset.data]
-        
-        from collections import Counter
-        print(f"\nTrain distribution:")
         train_dist = Counter(train_labels)
-        print(f"  Class 0 (Not Density {target_density}): {train_dist[0]} samples")
-        print(f"  Class 1 (Density {target_density}): {train_dist[1]} samples")
-        
-        print(f"\nTest distribution:")
         test_dist = Counter(test_labels)
-        print(f"  Class 0 (Not Density {target_density}): {test_dist[0]} samples")
-        print(f"  Class 1 (Density {target_density}): {test_dist[1]} samples")
         
-        print(f"\nClassnames: {self.classnames}")
-        print(f"{'='*70}\n")
+        print("\nTrain distribution (binary):")
+        print(f"  Label 0 (Not BI-RADS {target_density + 1}): {train_dist[0]}")
+        print(f"  Label 1 (BI-RADS {target_density + 1}): {train_dist[1]}")
+        print("\nTest distribution (binary):")
+        print(f"  Label 0 (Not BI-RADS {target_density + 1}): {test_dist[0]}")
+        print(f"  Label 1 (BI-RADS {target_density + 1}): {test_dist[1]}")
+        
+        return train_data, test_data
 
 
-class BIRADSDensity4Binary(BIRADS):
-    """Binary classification: Density 4 vs. all others"""
+class BIRADSDensity5Focus:
+    """
+    Binary focus on BI-RADS 5 (Density 4)
+    - BI-RADS 5 (Density 4): 300 samples → Label 1 [FOCUS]
+    - Not BI-RADS 5 (Densities 1,2,3): 300 samples (100 each) → Label 0
     
-    def __init__(self, preprocess, location=os.path.expanduser('~/data'), 
+    2 classes: Labels 0, 1
+    """
+    
+    def __init__(self, preprocess, location=os.path.expanduser('~/data'),
                  batch_size=128, num_workers=1):
-        super().__init__(
-            preprocess=preprocess,
-            location=location,
-            batch_size=batch_size,
-            num_workers=num_workers,
-            imbalanced=False,
-            seed=42
-        )
         
-        # Override to convert to binary
-        self._convert_to_binary(target_density=4)
+        print("\n" + "="*70)
+        print("BIRADS 5 FOCUS DATASET (BINARY)")
+        print("="*70)
+        print("Configuration:")
+        print("  BI-RADS 5 (Density 4): 300 samples → Label 1 [FOCUS]")
+        print("  Not BI-RADS 5:")
+        print("    - BI-RADS 2 (Density 1): 100 samples")
+        print("    - BI-RADS 3 (Density 2): 100 samples")
+        print("    - BI-RADS 4 (Density 3): 100 samples")
+        print("    Total Label 0: 300 samples")
+        
+        # Load all data
+        df = load_birads_data(location)
+        
+        # Sample: 100 each from Densities 1,2,3 and 300 from Density 4
+        sample_config = {
+            1: 100,  # BI-RADS 2
+            2: 100,  # BI-RADS 3
+            3: 100,  # BI-RADS 4
+            4: 300,  # BI-RADS 5 (FOCUS)
+        }
+        df_sampled = sample_distribution(df, sample_config, seed=42)
+        
+        # Train/test split
+        train_data, test_data = self._split_data(df_sampled, target_density=4)
+        
+        # Create binary datasets (target_density=4 means BI-RADS 5 is positive)
+        self.train_dataset = BinaryBIRADSDataset(train_data, preprocess, target_density=4)
+        self.test_dataset = BinaryBIRADSDataset(test_data, preprocess, target_density=4)
+        
+        # Create data loaders
+        self.train_loader = torch.utils.data.DataLoader(
+            self.train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+        self.test_loader = torch.utils.data.DataLoader(
+            self.test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+        
+        # Binary classnames
+        self.classnames = ['Not BI-RADS 5', 'BI-RADS 5']
+        
+        print(f"\nTrain: {len(train_data)} samples, Test: {len(test_data)} samples")
+        print(f"Classnames: {self.classnames}")
+        print("="*70 + "\n")
     
-    def _convert_to_binary(self, target_density):
-        """Convert multi-class to binary: target vs. others"""
+    def _split_data(self, df, target_density):
+        """Split into train/test (80/20)"""
+        data_list = df.to_dict('records')
+        indices = list(range(len(data_list)))
+        labels = [d['birads'] for d in data_list]
         
-        print(f"\n{'='*70}")
-        print(f"Converting to Binary Classification")
-        print(f"{'='*70}")
-        print(f"Target: Density {target_density}")
-        print(f"Others: All other densities combined")
+        train_idx, test_idx = train_test_split(
+            indices, test_size=0.2, stratify=labels, random_state=42)
         
-        # Update train dataset
-        for item in self.train_dataset.data:
-            if item['birads'] == target_density:
-                item['label'] = 1  # Positive class
-            else:
-                item['label'] = 0  # Negative class
+        train_data = [data_list[i] for i in train_idx]
+        test_data = [data_list[i] for i in test_idx]
         
-        # Update test dataset
-        for item in self.test_dataset.data:
-            if item['birads'] == target_density:
-                item['label'] = 1  # Positive class
-            else:
-                item['label'] = 0  # Negative class
+        # Count binary labels
+        train_labels = [1 if d['birads'] == target_density else 0 for d in train_data]
+        test_labels = [1 if d['birads'] == target_density else 0 for d in test_data]
         
-        # Update classnames for binary
-        self.classnames = [f'Not Density {target_density}', f'Density {target_density}']
-        
-        # Print distribution
-        train_labels = [d['label'] for d in self.train_dataset.data]
-        test_labels = [d['label'] for d in self.test_dataset.data]
-        
-        from collections import Counter
-        print(f"\nTrain distribution:")
         train_dist = Counter(train_labels)
-        print(f"  Class 0 (Not Density {target_density}): {train_dist[0]} samples")
-        print(f"  Class 1 (Density {target_density}): {train_dist[1]} samples")
-        
-        print(f"\nTest distribution:")
         test_dist = Counter(test_labels)
-        print(f"  Class 0 (Not Density {target_density}): {test_dist[0]} samples")
-        print(f"  Class 1 (Density {target_density}): {test_dist[1]} samples")
         
-        print(f"\nClassnames: {self.classnames}")
-        print(f"{'='*70}\n")
+        print("\nTrain distribution (binary):")
+        print(f"  Label 0 (Not BI-RADS {target_density + 1}): {train_dist[0]}")
+        print(f"  Label 1 (BI-RADS {target_density + 1}): {train_dist[1]}")
+        print("\nTest distribution (binary):")
+        print(f"  Label 0 (Not BI-RADS {target_density + 1}): {test_dist[0]}")
+        print(f"  Label 1 (BI-RADS {target_density + 1}): {test_dist[1]}")
+        
+        return train_data, test_data

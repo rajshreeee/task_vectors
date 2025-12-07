@@ -18,7 +18,7 @@ from src.datasets.resisc45 import RESISC45
 from src.datasets.stl10 import STL10
 from src.datasets.svhn import SVHN
 from src.datasets.sun397 import SUN397
-from src.datasets.birads import BIRADS, BIRADSImbalanced, BIRADSDensity2Binary, BIRADSDensity4Binary
+from src.datasets.birads import BIRADSImbalanced, BIRADSDensity2Focus, BIRADSDensity5Focus
 
 registry = {
     name: obj for name, obj in inspect.getmembers(sys.modules[__name__], inspect.isclass)
