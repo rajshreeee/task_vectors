@@ -413,3 +413,61 @@ class BIRADSDensity5Focus:
         print(f"  Label 1 (BI-RADS {target_density + 1}): {test_dist[1]}")
         
         return train_data, test_data
+
+class BIRADSBalancedTest:
+    """
+    Balanced test dataset: Equal samples per class for fair evaluation
+    - BI-RADS 2,3,4,5: 100 samples each (or max available)
+    
+    4 classes: Labels 0, 1, 2, 3
+    NO train split - this is test-only
+    """
+    
+    def __init__(self, preprocess, location=os.path.expanduser('~/data'),
+                 batch_size=128, num_workers=1):
+        
+        print("\n" + "="*70)
+        print("BIRADS BALANCED TEST DATASET")
+        print("="*70)
+        print("Configuration: 100 samples per class for fair evaluation")
+        
+        # Load all data
+        df = load_birads_data(location)
+        
+        # Sample 100 from each class
+        sample_config = {
+            1: 100,  # BI-RADS 2
+            2: 100,  # BI-RADS 3
+            3: 100,  # BI-RADS 4
+            4: 100,  # BI-RADS 5
+        }
+        
+        print("\nSampling balanced test set:")
+        df_sampled = sample_distribution(df, sample_config, seed=42)
+        
+        # Convert to list
+        data_list = df_sampled.to_dict('records')
+        
+        # Create test dataset (no train/test split - this IS the test set)
+        self.test_dataset = MultiClassBIRADSDataset(data_list, preprocess)
+        
+        # Create test loader
+        self.test_loader = torch.utils.data.DataLoader(
+            self.test_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers
+        )
+        
+        # Classnames
+        self.classnames = ['BI-RADS 2', 'BI-RADS 3', 'BI-RADS 4', 'BI-RADS 5']
+        
+        # Show distribution
+        dist = Counter([d['birads'] for d in data_list])
+        print("\nTest distribution:")
+        for d in sorted(dist.keys()):
+            print(f"  Density {d} (BI-RADS {d+1}): {dist[d]} samples")
+        
+        print(f"\nTotal test samples: {len(data_list)}")
+        print(f"Classnames: {self.classnames}")
+        print("="*70 + "\n")
