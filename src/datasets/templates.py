@@ -226,6 +226,8 @@ dataset_to_template = {
     'SVHN': svhn_template,
     'BIRADS': birads_template,
     'BIRADSImbalanced': birads_template,
+    'BIRADSDensity2Focus': birads_template,
+    'BIRADSDensity4Focus': birads_template
 }
 
 
