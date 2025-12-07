@@ -1,6 +1,4 @@
-from ast import If
 import os
-from random import seed
 import torch
 import pandas as pd
 from PIL import Image
@@ -17,15 +15,9 @@ class BIRADS:
                  imbalanced=False,
                  max_samples_per_class=1000,
                  minority_samples=200,
-                 seed=42, 
-                focus_class=None):
+                 seed=42,
+                 focus_class=None):
         """
-        BI-RADS dataset for mammography classification.
-        
-        Args:
-            ...
-            focus_class: If set, this density class gets minority_samples (usually more),
-                        all others get max_samples_per_class (usually fewer)
         BI-RADS dataset for mammography classification.
         
         Dataset uses 0-indexed Density values: 0, 1, 2, 3, 4
@@ -36,8 +28,8 @@ class BIRADS:
         self.location = Path(location)
         self.imbalanced = imbalanced
         self.seed = seed
-        self.focus_class = focus_class  # ← ADD THIS
-
+        self.focus_class = focus_class
+        
         # Load and prepare dataset
         data_dir = self.location / 'MINI-DDSM-Complete-JPEG-8'
         metadata_file = data_dir / 'DataWMask.xlsx'
@@ -58,7 +50,6 @@ class BIRADS:
         print(df['birads'].value_counts().sort_index())
         
         # Filter to Density 1-4 (skip 0 which has only 4 samples)
-        # These are 0-indexed values from the dataset
         df = df[df['birads'].isin([1, 2, 3, 4])].copy()
         
         print(f"\nAfter filtering to Density 1-4:")
@@ -71,22 +62,11 @@ class BIRADS:
                 max_samples_per_class=max_samples_per_class,
                 minority_samples=minority_samples,
                 seed=seed,
-                focus_class=focus_class  # ← ADD THIS
+                focus_class=focus_class
             )
         
-        # Create 0-indexed labels for model (shift down by 1)
-        # BIRADS 2 ->  Density 1 -> label 0
-        # BIRADS 3 -> Density 2 -> label 1
-        # BIRADS 4 -> Density 3 -> label 2
-        # BIRADS 5 -> Density 4 -> label 3
-        df['label'] = df['birads']
-        
-        print(f"\nLabel mapping:")
-        print(f"  Density -> Label")
-        for density in sorted(df['birads'].unique()):
-            label = density - 1
-            count = len(df[df['birads'] == density])
-            print(f"  {density} -> {label} ({count} samples)")
+        # Keep original density values as labels for now
+        df['label'] = df['birads'] - 1
         
         # Convert to list of dicts to avoid Subset indexing issues
         data_list = df.to_dict('records')
@@ -145,7 +125,6 @@ class BIRADS:
         )
         
         # Class names for zero-shot classification head
-        # These correspond to Density 1, 2, 3, 4 (which are labels 0, 1, 2, 3)
         self.classnames = ['Density 1', 'Density 2', 'Density 3', 'Density 4']
         
         print(f"\nClassnames: {self.classnames}")
@@ -154,17 +133,13 @@ class BIRADS:
     
     def _create_imbalance(self, df, max_samples_per_class, minority_samples, seed, focus_class=None):
         """
-        Create artificial imbalance with Density 4 as minority class
-    
-            Args:
-            focus_class: If None, Density 4 is minority. 
-                     If set, that density gets minority_samples (abundant),
-                     all others get max_samples_per_class (scarce)
+        Create artificial imbalance.
         """
+        
         print(f"\n{'='*70}")
         print(f"Creating Artificial Imbalance")
         print(f"{'='*70}")
-    
+        
         if focus_class is None:
             # Default: Density 4 is minority (scarce)
             minority_class = 4
@@ -179,38 +154,32 @@ class BIRADS:
             print(f"Config (FOCUS MODE):")
             print(f"  Regular classes (Densities {majority_classes}): {max_samples_per_class} samples each")
             print(f"  Focus class (Density {focus_class}): {minority_samples} samples [ABUNDANT]")
-    
+        
         print(f"  Imbalance ratio: {minority_samples / max_samples_per_class:.1f}:1")
-    
-    # Sample majority classes (scarce)
+        
+        # Sample majority classes
         dfs = []
         for density_val in majority_classes:
             df_class = df[df['birads'] == density_val]
             n_samples = min(len(df_class), max_samples_per_class)
             df_sampled = df_class.sample(n=n_samples, random_state=seed)
             dfs.append(df_sampled)
-            status = "[SCARCE]" if focus_class is not None else ""
-            print(f"  Density {density_val} {status}: {len(df_class)} -> {n_samples} samples")
-    
-    # Sample minority/focus class (abundant or scarce depending on mode)
+            print(f"  Density {density_val}: {len(df_class)} -> {n_samples} samples")
+        
+        # Sample minority/focus class
         df_special = df[df['birads'] == minority_class]
         n_special = min(len(df_special), minority_samples)
         df_special_sampled = df_special.sample(n=n_special, random_state=seed)
         dfs.append(df_special_sampled)
-    
-        if focus_class is None:
-            status = "[SCARCE MINORITY]"
-        else:
-            status = "[ABUNDANT FOCUS]"
-        print(f"  Density {minority_class} {status}: {len(df_special)} -> {n_special} samples")
-    
-    # Combine and shuffle
+        print(f"  Density {minority_class} [FOCUS]: {len(df_special)} -> {n_special} samples")
+        
+        # Combine and shuffle
         df_imbalanced = pd.concat(dfs, ignore_index=True).sample(frac=1, random_state=seed).reset_index(drop=True)
-    
+        
         print(f"\nFinal distribution:")
         print(df_imbalanced['birads'].value_counts().sort_index())
         print(f"Total: {len(df_imbalanced)} samples")
-    
+        
         return df_imbalanced
     
     def _map_images_to_birads(self, data_dir, df_meta):
@@ -247,7 +216,7 @@ class BIRADS:
                     
                     if len(matching_rows) > 0:
                         row = matching_rows.iloc[0]
-                        birads = int(row['Density'])  # Already 0-indexed: 0, 1, 2, 3, 4
+                        birads = int(row['Density'])
                         
                         data.append({
                             'image_path': str(img_path),
@@ -272,11 +241,8 @@ class BIRADSDataset(torch.utils.data.Dataset):
         self.data = data_list
         self.preprocess = preprocess
         
-        # Verify all labels are valid (should be 0, 1, 2, 3)
+        # Verify all labels are valid
         labels = [d['label'] for d in self.data]
-        assert min(labels) >= 0, f"Found negative label: {min(labels)}"
-        assert max(labels) <= 3, f"Found label > 3: {max(labels)} (expected 0-3)"
-        
         print(f"  BIRADSDataset created with {len(self.data)} samples")
         print(f"  Label range: {min(labels)} to {max(labels)}")
     
@@ -300,15 +266,15 @@ class BIRADSDataset(torch.utils.data.Dataset):
         
         label = item['label']
         
-        # Safety check
-        assert 0 <= label <= 3, f"Label {label} out of range [0, 3]"
-        
         return image, label
 
 
-# Convenience class for imbalanced version
+# ============================================================================
+# MULTI-CLASS VARIANTS
+# ============================================================================
+
 class BIRADSImbalanced(BIRADS):
-    """BI-RADS dataset with artificial imbalance (Density 4 is minority class)"""
+    """BI-RADS dataset with artificial imbalance (Density 4 is minority/scarce)"""
     
     def __init__(self, preprocess, location=os.path.expanduser('~/data'), 
                  batch_size=128, num_workers=1):
@@ -323,10 +289,76 @@ class BIRADSImbalanced(BIRADS):
             seed=42
         )
 
-# Add these classes at the end of your birads.py file
 
-class BIRADSDensity2Focus(BIRADS):
-    """BI-RADS dataset with focus on Density 2 (BI-RADS 3) - make it abundant"""
+# ============================================================================
+# BINARY CLASSIFICATION VARIANTS
+# ============================================================================
+
+class BIRADSDensity2Binary(BIRADS):
+    """Binary classification: Density 2 vs. all others"""
+    
+    def __init__(self, preprocess, location=os.path.expanduser('~/data'), 
+                 batch_size=128, num_workers=1):
+        # Initialize with normal settings first
+        super().__init__(
+            preprocess=preprocess,
+            location=location,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            imbalanced=False,
+            seed=42
+        )
+        
+        # Override to convert to binary
+        self._convert_to_binary(target_density=1)
+    
+    def _convert_to_binary(self, target_density):
+        """Convert multi-class to binary: target vs. others"""
+        
+        print(f"\n{'='*70}")
+        print(f"Converting to Binary Classification")
+        print(f"{'='*70}")
+        print(f"Target: Density {target_density}")
+        print(f"Others: All other densities combined")
+        
+        # Update train dataset
+        for item in self.train_dataset.data:
+            if item['birads'] == target_density:
+                item['label'] = 1  # Positive class
+            else:
+                item['label'] = 0  # Negative class
+        
+        # Update test dataset
+        for item in self.test_dataset.data:
+            if item['birads'] == target_density:
+                item['label'] = 1  # Positive class
+            else:
+                item['label'] = 0  # Negative class
+        
+        # Update classnames for binary
+        self.classnames = [f'Not Density {target_density}', f'Density {target_density}']
+        
+        # Print distribution
+        train_labels = [d['label'] for d in self.train_dataset.data]
+        test_labels = [d['label'] for d in self.test_dataset.data]
+        
+        from collections import Counter
+        print(f"\nTrain distribution:")
+        train_dist = Counter(train_labels)
+        print(f"  Class 0 (Not Density {target_density}): {train_dist[0]} samples")
+        print(f"  Class 1 (Density {target_density}): {train_dist[1]} samples")
+        
+        print(f"\nTest distribution:")
+        test_dist = Counter(test_labels)
+        print(f"  Class 0 (Not Density {target_density}): {test_dist[0]} samples")
+        print(f"  Class 1 (Density {target_density}): {test_dist[1]} samples")
+        
+        print(f"\nClassnames: {self.classnames}")
+        print(f"{'='*70}\n")
+
+
+class BIRADSDensity4Binary(BIRADS):
+    """Binary classification: Density 4 vs. all others"""
     
     def __init__(self, preprocess, location=os.path.expanduser('~/data'), 
                  batch_size=128, num_workers=1):
@@ -335,27 +367,53 @@ class BIRADSDensity2Focus(BIRADS):
             location=location,
             batch_size=batch_size,
             num_workers=num_workers,
-            imbalanced=True,
-            max_samples_per_class=300,   # Densities 1, 3, 4 get 300 each
-            minority_samples=1200,        # Density 2 gets 1200 (4x more)
-            seed=42,
-            focus_class=2  # Focus on Density 2
+            imbalanced=False,
+            seed=42
         )
-
-
-class BIRADSDensity4Focus(BIRADS):
-    """BI-RADS dataset with focus on Density 4 (BI-RADS 5) - make it abundant"""
+        
+        # Override to convert to binary
+        self._convert_to_binary(target_density=4)
     
-    def __init__(self, preprocess, location=os.path.expanduser('~/data'), 
-                 batch_size=128, num_workers=1):
-        super().__init__(
-            preprocess=preprocess,
-            location=location,
-            batch_size=batch_size,
-            num_workers=num_workers,
-            imbalanced=True,
-            max_samples_per_class=300,   # Densities 1, 2, 3 get 300 each
-            minority_samples=1200,        # Density 4 gets 1200 (4x more)
-            seed=42,
-            focus_class=4  # Focus on Density 4
-        )
+    def _convert_to_binary(self, target_density):
+        """Convert multi-class to binary: target vs. others"""
+        
+        print(f"\n{'='*70}")
+        print(f"Converting to Binary Classification")
+        print(f"{'='*70}")
+        print(f"Target: Density {target_density}")
+        print(f"Others: All other densities combined")
+        
+        # Update train dataset
+        for item in self.train_dataset.data:
+            if item['birads'] == target_density:
+                item['label'] = 1  # Positive class
+            else:
+                item['label'] = 0  # Negative class
+        
+        # Update test dataset
+        for item in self.test_dataset.data:
+            if item['birads'] == target_density:
+                item['label'] = 1  # Positive class
+            else:
+                item['label'] = 0  # Negative class
+        
+        # Update classnames for binary
+        self.classnames = [f'Not Density {target_density}', f'Density {target_density}']
+        
+        # Print distribution
+        train_labels = [d['label'] for d in self.train_dataset.data]
+        test_labels = [d['label'] for d in self.test_dataset.data]
+        
+        from collections import Counter
+        print(f"\nTrain distribution:")
+        train_dist = Counter(train_labels)
+        print(f"  Class 0 (Not Density {target_density}): {train_dist[0]} samples")
+        print(f"  Class 1 (Density {target_density}): {train_dist[1]} samples")
+        
+        print(f"\nTest distribution:")
+        test_dist = Counter(test_labels)
+        print(f"  Class 0 (Not Density {target_density}): {test_dist[0]} samples")
+        print(f"  Class 1 (Density {target_density}): {test_dist[1]} samples")
+        
+        print(f"\nClassnames: {self.classnames}")
+        print(f"{'='*70}\n")
