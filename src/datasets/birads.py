@@ -7,55 +7,33 @@ from sklearn.model_selection import train_test_split
 from collections import Counter
 
 
-def load_birads_data(location):
-    """Load and filter BI-RADS data to densities 1-4 (BI-RADS 2-5)"""
+def load_birads_data(location, split='train'):
+    """
+    Load BI-RADS data from pre-split CSV files.
+    
+    Args:
+        location: Path to data directory
+        split: 'train' or 'test'
+    
+    Returns:
+        DataFrame with columns: image_path, birads, classification
+    """
     data_dir = Path(location) / 'MINI-DDSM-Complete-JPEG-8'
-    metadata_file = data_dir / 'DataWMask.xlsx'
     
-    if not metadata_file.exists():
-        raise FileNotFoundError(f"Metadata file not found at {metadata_file}")
+    if split == 'train':
+        csv_file = data_dir / 'train_split.csv'
+    else:
+        csv_file = data_dir / 'test_split.csv'
     
-    df_meta = pd.read_excel(metadata_file)
+    if not csv_file.exists():
+        raise FileNotFoundError(
+            f"Split file not found: {csv_file}\n"
+            f"Please run create_splits.py first!"
+        )
     
-    # Map images to BI-RADS categories
-    data = []
-    class_folders = {
-        'Normal': data_dir / 'Normal',
-        'Benign': data_dir / 'Benign',
-        'Cancer': data_dir / 'Cancer'
-    }
+    df = pd.read_csv(csv_file)
     
-    for class_name, class_path in class_folders.items():
-        if not class_path.exists():
-            continue
-        
-        case_folders = [f for f in class_path.iterdir() if f.is_dir()]
-        
-        for case_folder in case_folders:
-            case_id = case_folder.name
-            images = [img for img in case_folder.glob('*.jpg') 
-                     if 'mask' not in img.name.lower() and 'boundary' not in img.name.lower()]
-            
-            for img_path in images:
-                matching_rows = df_meta[df_meta['fileName'].str.contains(case_id, na=False)]
-                if len(matching_rows) == 0:
-                    matching_rows = df_meta[df_meta['fullPath'].str.contains(case_id, na=False)]
-                
-                if len(matching_rows) > 0:
-                    row = matching_rows.iloc[0]
-                    birads = int(row['Density'])
-                    data.append({
-                        'image_path': str(img_path),
-                        'birads': birads,
-                        'classification': class_name,
-                    })
-    
-    df = pd.DataFrame(data)
-    
-    # Filter to densities 1-4 (BI-RADS 2-5), skip 0
-    df = df[df['birads'].isin([1, 2, 3, 4])].copy()
-    
-    print(f"Loaded BI-RADS data:")
+    print(f"Loaded BI-RADS data from {split} split:")
     print(df['birads'].value_counts().sort_index())
     
     return df
@@ -149,8 +127,8 @@ class BIRADSImbalanced:
         print("  BI-RADS 4 (Density 3): 800 samples → Label 2")
         print("  BI-RADS 5 (Density 4): 300 samples → Label 3 [UNDERREPRESENTED]")
         
-        # Load all data
-        df = load_birads_data(location)
+        # Load train split only
+        df = load_birads_data(location, split='train')
         
         # Sample according to imbalanced distribution
         sample_config = {
@@ -270,8 +248,8 @@ class BIRADSDensity2Focus:
         print("    - BI-RADS 5 (Density 4): 100 samples")
         print("    Total Label 0: 300 samples")
         
-        # Load all data
-        df = load_birads_data(location)
+        # Load train split only
+        df = load_birads_data(location, split='train')
         
         # Sample: 300 from Density 1, 100 each from others
         sample_config = {
@@ -354,8 +332,8 @@ class BIRADSDensity5Focus:
         print("    - BI-RADS 4 (Density 3): 100 samples")
         print("    Total Label 0: 300 samples")
         
-        # Load all data
-        df = load_birads_data(location)
+        # Load train split only
+        df = load_birads_data(location, split='train')
         
         # Sample: 100 each from Densities 1,2,3 and 300 from Density 4
         sample_config = {
@@ -413,3 +391,51 @@ class BIRADSDensity5Focus:
         print(f"  Label 1 (BI-RADS {target_density + 1}): {test_dist[1]}")
         
         return train_data, test_data
+
+class BIRADSBalancedTest:
+    """
+    Balanced test dataset: Equal samples per class for fair evaluation
+    - BI-RADS 2,3,4,5: 100 samples each (or max available)
+    
+    4 classes: Labels 0, 1, 2, 3
+    NO train split - this is test-only
+    """
+    
+    def __init__(self, preprocess, location=os.path.expanduser('~/data'),
+                 batch_size=128, num_workers=1):
+        
+        print("\n" + "="*70)
+        print("BIRADS BALANCED TEST DATASET")
+        print("="*70)
+        print("Configuration: 100 samples per class for fair evaluation")
+        
+        # Load test split only
+        df = load_birads_data(location, split='test')
+        
+        # Use all available data from test split
+        print("\nUsing test split:")
+        data_list = df.to_dict('records')
+        
+        # Create test dataset (no train/test split - this IS the test set)
+        self.test_dataset = MultiClassBIRADSDataset(data_list, preprocess)
+        
+        # Create test loader
+        self.test_loader = torch.utils.data.DataLoader(
+            self.test_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers
+        )
+        
+        # Classnames
+        self.classnames = ['BI-RADS 2', 'BI-RADS 3', 'BI-RADS 4', 'BI-RADS 5']
+        
+        # Show distribution
+        dist = Counter([d['birads'] for d in data_list])
+        print("\nTest distribution:")
+        for d in sorted(dist.keys()):
+            print(f"  Density {d} (BI-RADS {d+1}): {dist[d]} samples")
+        
+        print(f"\nTotal test samples: {len(data_list)}")
+        print(f"Classnames: {self.classnames}")
+        print("="*70 + "\n")

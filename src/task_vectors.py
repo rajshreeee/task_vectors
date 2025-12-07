@@ -14,8 +14,8 @@ class TaskVector():
         else:
             assert pretrained_checkpoint is not None and finetuned_checkpoint is not None
             with torch.no_grad():
-                pretrained_state_dict = torch.load(pretrained_checkpoint).state_dict()
-                finetuned_state_dict = torch.load(finetuned_checkpoint).state_dict()
+                pretrained_state_dict = torch.load(pretrained_checkpoint, weights_only=False).state_dict()
+                finetuned_state_dict = torch.load(finetuned_checkpoint, weights_only=False).state_dict()
                 self.vector = {}
                 for key in pretrained_state_dict:
                     if pretrained_state_dict[key].dtype in [torch.int64, torch.uint8]:
@@ -37,6 +37,21 @@ class TaskVector():
         if other is None or isinstance(other, int):
             return self
         return self.__add__(other)
+    
+    def __sub__(self, other):
+        """Subtract two task vectors."""
+        with torch.no_grad():
+            new_vector = {}
+            for key in self.vector:
+                if key not in other.vector:
+                    print(f'Warning, key {key} is not present in both task vectors.')
+                    continue
+                new_vector[key] = self.vector[key] - other.vector[key]
+        return TaskVector(vector=new_vector)
+    
+    def __rsub__(self, other):
+        """Right subtraction (for expressions like: scalar - task_vector)."""
+        return self.__neg__().__add__(other)
 
     def __neg__(self):
         """Negate a task vector."""
@@ -45,11 +60,27 @@ class TaskVector():
             for key in self.vector:
                 new_vector[key] = - self.vector[key]
         return TaskVector(vector=new_vector)
+    
+    def __mul__(self, other):
+        """Multiply task vector by a scalar (task_vector * scalar)."""
+        with torch.no_grad():
+            new_vector = {}
+            for key in self.vector:
+                new_vector[key] = other * self.vector[key]
+        return TaskVector(vector=new_vector)
+    
+    def __rmul__(self, other):
+        """Right multiplication (scalar * task_vector)."""
+        with torch.no_grad():
+            new_vector = {}
+            for key in self.vector:
+                new_vector[key] = other * self.vector[key]
+        return TaskVector(vector=new_vector)
 
     def apply_to(self, pretrained_checkpoint, scaling_coef=1.0):
         """Apply a task vector to a pretrained model."""
         with torch.no_grad():
-            pretrained_model = torch.load(pretrained_checkpoint)
+            pretrained_model = torch.load(pretrained_checkpoint, weights_only=False)
             new_state_dict = {}
             pretrained_state_dict = pretrained_model.state_dict()
             for key in pretrained_state_dict:
@@ -59,4 +90,5 @@ class TaskVector():
                 new_state_dict[key] = pretrained_state_dict[key] + scaling_coef * self.vector[key]
         pretrained_model.load_state_dict(new_state_dict, strict=False)
         return pretrained_model
+    
 
